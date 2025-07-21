@@ -184,6 +184,129 @@ func TestValueAppliedToSymbols(t *testing.T) {
 	}
 }
 
+func TestValueAppliedToSymbolsBigInt(t *testing.T) {
+	// Helper to create a deep copy of a slice of DigitBigInt.
+	// This is necessary because the function under test modifies the slice in-place.
+	deepCopy := func(s []DigitBigInt) []DigitBigInt {
+		if s == nil {
+			return nil
+		}
+		c := make([]DigitBigInt, len(s))
+		for i, d := range s {
+			c[i] = DigitBigInt{
+				Value: new(big.Int).Set(d.Value),
+				Base:  new(big.Int).Set(d.Base),
+			}
+		}
+		return c
+	}
+
+	// Helper to compare slices of DigitBigInt, as reflect.DeepEqual would compare pointers.
+	compareDigitBigIntSlices := func(t *testing.T, got, want []DigitBigInt) bool {
+		t.Helper()
+		if len(got) != len(want) {
+			return false
+		}
+		for i := range got {
+			if got[i].Value.Cmp(want[i].Value) != 0 || got[i].Base.Cmp(want[i].Base) != 0 {
+				return false
+			}
+		}
+		return true
+	}
+
+	testCases := []struct {
+		name            string
+		expectedSymbols []DigitBigInt
+		expectedErr     error
+	}{
+		{
+			name: "zero value",
+			expectedSymbols: []DigitBigInt{
+				{Value: big.NewInt(0), Base: big.NewInt(10)},
+				{Value: big.NewInt(0), Base: big.NewInt(10)},
+			},
+			expectedErr: nil,
+		},
+		{
+			name: "simple base 10",
+			expectedSymbols: []DigitBigInt{
+				{Value: big.NewInt(1), Base: big.NewInt(10)},
+				{Value: big.NewInt(2), Base: big.NewInt(10)},
+				{Value: big.NewInt(3), Base: big.NewInt(10)},
+			},
+			expectedErr: nil,
+		},
+		{
+			name: "mixed base with large numbers",
+			expectedSymbols: []DigitBigInt{
+				{Value: big.NewInt(5), Base: new(big.Int).Lsh(big.NewInt(2), 128)},
+				{Value: big.NewInt(10), Base: big.NewInt(20)},
+			},
+			expectedErr: nil,
+		},
+		{
+			name:            "edge case: empty symbols, zero value",
+			expectedSymbols: []DigitBigInt{},
+			expectedErr:     nil,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Create a copy of the symbols for the test run, as the function modifies it in-place.
+			value := SymbolsValueBigInt(tc.expectedSymbols)
+			inputSymbols := deepCopy(tc.expectedSymbols)
+
+			err := ValueAppliedToSymbolsBigInt(value, inputSymbols)
+
+			if (err != nil) != (tc.expectedErr != nil) || (err != nil && err.Error() != tc.expectedErr.Error()) {
+				t.Errorf("ValueAppliedToSymbolsBigInt() error = %v, wantErr %v", err, tc.expectedErr)
+				return
+			}
+
+			if err == nil && !compareDigitBigIntSlices(t, inputSymbols, tc.expectedSymbols) {
+				t.Errorf("ValueAppliedToSymbolsBigInt() got symbols = %v, want %v", inputSymbols, tc.expectedSymbols)
+			}
+		})
+	}
+
+	testCases02 := []struct {
+		name        string
+		value       *big.Int
+		symbols     []DigitBigInt
+		expectedErr error
+	}{
+		{
+			name:  "error: negative value",
+			value: big.NewInt(-1),
+			symbols: []DigitBigInt{
+				{Value: new(big.Int), Base: big.NewInt(10)},
+			},
+			expectedErr: errors.New("negative values are not supported"),
+		},
+		{
+			name:  "error: value larger than capacity",
+			value: big.NewInt(100),
+			symbols: []DigitBigInt{
+				{Value: new(big.Int), Base: big.NewInt(10)},
+				{Value: new(big.Int), Base: big.NewInt(10)},
+			},
+			expectedErr: errors.New("value is too large to be represented by the given symbols"),
+		},
+	}
+
+	for _, tc := range testCases02 {
+		t.Run(tc.name, func(t *testing.T) {
+			err := ValueAppliedToSymbolsBigInt(tc.value, tc.symbols)
+
+			if (err != nil) != (tc.expectedErr != nil) || (err != nil && err.Error() != tc.expectedErr.Error()) {
+				t.Errorf("ValueAppliedToSymbolsBigInt() error = %v, wantErr %v", err, tc.expectedErr)
+			}
+		})
+	}
+}
+
 func TestSymbolsValueBigInt(t *testing.T) {
 	// Setup for a test case with very large numbers that would overflow standard integer types.
 	twoToThe128 := new(big.Int).Exp(big.NewInt(2), big.NewInt(128), nil)
@@ -226,8 +349,8 @@ func TestSymbolsValueBigInt(t *testing.T) {
 		{
 			name: "large numbers that overflow int64",
 			symbols: []DigitBigInt{
-				{Value: big.NewInt(1), Base: big.NewInt(10)}, // MSB
-				{Value: big.NewInt(1), Base: new(big.Int).Set(twoToThe128)},   // LSB
+				{Value: big.NewInt(1), Base: big.NewInt(10)},                // MSB
+				{Value: big.NewInt(1), Base: new(big.Int).Set(twoToThe128)}, // LSB
 			},
 			expected: expectedLargeValue, // 1 * (2^128) + 1
 		},

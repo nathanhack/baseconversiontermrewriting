@@ -166,89 +166,6 @@ func SymbolsRewriteTo[S constraints.Integer, T constraints.Integer](symbols []S,
 	return result
 }
 
-// SymbolsValue converts a number represented as a slice of Digits (mixed-base representation)
-// to its numerical value as a *big.Int.
-// The input `symbols` slice is assumed to be ordered from Most Significant Digit (MSD) to
-// Least Significant Digit (LSD), i.e., `[an, an-1, ..., a0]`.
-// The value is calculated using the formula: ν(an an-1 ...a0) = Σ (from i=0 to n) ν(ai) * Π (from j=0 to i-1) bj
-// where a_i is the i-th digit from the right (LSB), and b_j is the base of the j-th digit from the right.
-func SymbolsValue(symbols []Digit) *big.Int {
-	totalValue := big.NewInt(0)
-	currentPowerOfBases := big.NewInt(1)
-
-	for i := len(symbols) - 1; i >= 0; i-- { // Iterate from LSB to MSB
-		digit := symbols[i]
-		totalValue.Add(totalValue, new(big.Int).Mul(big.NewInt(int64(digit.Value)), currentPowerOfBases))
-		currentPowerOfBases.Mul(currentPowerOfBases, big.NewInt(int64(digit.Base)))
-	}
-	return totalValue
-}
-
-// SymbolsValueBigInt converts a number represented as a slice of DigitBigInts (mixed-base representation)
-// to its numerical value as a *big.Int. This version handles arbitrarily large digit values and bases.
-// The input `symbols` slice is assumed to be ordered from Most Significant Digit (MSD) to
-// Least Significant Digit (LSD).
-func SymbolsValueBigInt(symbols []DigitBigInt) *big.Int {
-	totalValue := big.NewInt(0)
-	currentPowerOfBases := big.NewInt(1)
-	term := new(big.Int) // To store intermediate multiplication result
-
-	for i := len(symbols) - 1; i >= 0; i-- { // Iterate from LSB to MSB
-		digit := symbols[i]
-		// term = digit.Value * currentPowerOfBases
-		term.Mul(digit.Value, currentPowerOfBases)
-		// totalValue = totalValue + term
-		totalValue.Add(totalValue, term)
-		// currentPowerOfBases = currentPowerOfBases * digit.Base
-		currentPowerOfBases.Mul(currentPowerOfBases, digit.Base)
-	}
-	return totalValue
-}
-
-// ValueAppliedToSymbols decomposes a numerical value into a mixed-base representation
-// defined by the bases of the provided symbols slice. It updates the value of each
-// digit in-place.
-//
-// The function processes digits from Least Significant (LSB) to Most Significant (MSB).
-// If the provided value is too large to be represented by the given symbols' bases,
-// it returns an error. A negative input value will also result in an error.
-func ValueAppliedToSymbols(value *big.Int, symbols []Digit) error {
-	// Make a mutable copy of the value to avoid modifying the caller's *big.Int.
-	remainingValue := new(big.Int).Set(value)
-	zero := big.NewInt(0)
-
-	// Check for negative input value, which is not supported.
-	if remainingValue.Cmp(zero) < 0 {
-		return errors.New("negative values are not supported")
-	}
-
-	// Iterate from LSB to MSB (right to left in the slice).
-	for i := len(symbols) - 1; i >= 0; i-- {
-		digit := &symbols[i]
-		base := big.NewInt(int64(digit.Base))
-
-		// Use DivMod to get quotient and remainder in one step.
-		// remainingValue = quot * base + rem
-		quot, rem := new(big.Int), new(big.Int)
-		quot.DivMod(remainingValue, base, rem)
-
-		// The remainder is the new value for the current digit.
-		// It will always fit in an int because 0 <= rem < base, and base is an int.
-		digit.Value = int(rem.Int64())
-
-		// The quotient becomes the new remaining value for the next iteration.
-		remainingValue.Set(quot)
-	}
-
-	// After processing all digits, if there's still a remaining value,
-	// it means the original value was too large for the given symbols.
-	if remainingValue.Cmp(zero) != 0 {
-		return errors.New("value is too large to be represented by the given symbols")
-	}
-
-	return nil
-}
-
 // SymbolsRewriteToBigInt converts a number represented as a slice of *big.Int digits
 // from an input base to an output base, both also *big.Int.
 // It implements the term-rewriting algorithm for direct base conversion, adapted for
@@ -404,4 +321,132 @@ func SymbolsRewriteToBigInt(symbols []*big.Int, inputBase, outputBase *big.Int) 
 	}
 
 	return result
+}
+
+// SymbolsValue converts a number represented as a slice of Digits (mixed-base representation)
+// to its numerical value as a *big.Int.
+// The input `symbols` slice is assumed to be ordered from Most Significant Digit (MSD) to
+// Least Significant Digit (LSD), i.e., `[an, an-1, ..., a0]`.
+// The value is calculated using the formula: ν(an an-1 ...a0) = Σ (from i=0 to n) ν(ai) * Π (from j=0 to i-1) bj
+// where a_i is the i-th digit from the right (LSB), and b_j is the base of the j-th digit from the right.
+func SymbolsValue(symbols []Digit) *big.Int {
+	totalValue := big.NewInt(0)
+	currentPowerOfBases := big.NewInt(1)
+
+	for i := len(symbols) - 1; i >= 0; i-- { // Iterate from LSB to MSB
+		digit := symbols[i]
+		totalValue.Add(totalValue, new(big.Int).Mul(big.NewInt(int64(digit.Value)), currentPowerOfBases))
+		currentPowerOfBases.Mul(currentPowerOfBases, big.NewInt(int64(digit.Base)))
+	}
+	return totalValue
+}
+
+// SymbolsValueBigInt converts a number represented as a slice of DigitBigInts (mixed-base representation)
+// to its numerical value as a *big.Int. This version handles arbitrarily large digit values and bases.
+// The input `symbols` slice is assumed to be ordered from Most Significant Digit (MSD) to
+// Least Significant Digit (LSD).
+func SymbolsValueBigInt(symbols []DigitBigInt) *big.Int {
+	totalValue := big.NewInt(0)
+	currentPowerOfBases := big.NewInt(1)
+	term := new(big.Int) // To store intermediate multiplication result
+
+	for i := len(symbols) - 1; i >= 0; i-- { // Iterate from LSB to MSB
+		digit := symbols[i]
+		// term = digit.Value * currentPowerOfBases
+		term.Mul(digit.Value, currentPowerOfBases)
+		// totalValue = totalValue + term
+		totalValue.Add(totalValue, term)
+		// currentPowerOfBases = currentPowerOfBases * digit.Base
+		currentPowerOfBases.Mul(currentPowerOfBases, digit.Base)
+	}
+	return totalValue
+}
+
+// ValueAppliedToSymbols decomposes a numerical value into a mixed-base representation
+// defined by the bases of the provided symbols slice. It updates the value of each
+// digit in-place.
+//
+// The function processes digits from Least Significant (LSB) to Most Significant (MSB).
+// If the provided value is too large to be represented by the given symbols' bases,
+// it returns an error. A negative input value will also result in an error.
+func ValueAppliedToSymbols(value *big.Int, symbols []Digit) error {
+	// Make a mutable copy of the value to avoid modifying the caller's *big.Int.
+	remainingValue := new(big.Int).Set(value)
+	zero := big.NewInt(0)
+
+	// Check for negative input value, which is not supported.
+	if remainingValue.Cmp(zero) < 0 {
+		return errors.New("negative values are not supported")
+	}
+
+	// Iterate from LSB to MSB (right to left in the slice).
+	for i := len(symbols) - 1; i >= 0; i-- {
+		digit := &symbols[i]
+		base := big.NewInt(int64(digit.Base))
+
+		// Use DivMod to get quotient and remainder in one step.
+		// remainingValue = quot * base + rem
+		quot, rem := new(big.Int), new(big.Int)
+		quot.DivMod(remainingValue, base, rem)
+
+		// The remainder is the new value for the current digit.
+		// It will always fit in an int because 0 <= rem < base, and base is an int.
+		digit.Value = int(rem.Int64())
+
+		// The quotient becomes the new remaining value for the next iteration.
+		remainingValue.Set(quot)
+	}
+
+	// After processing all digits, if there's still a remaining value,
+	// it means the original value was too large for the given symbols.
+	if remainingValue.Cmp(zero) != 0 {
+		return errors.New("value is too large to be represented by the given symbols")
+	}
+
+	return nil
+}
+
+// ValueAppliedToSymbolsBigInt decomposes a numerical value into a mixed-base representation
+// defined by the bases of the provided symbols slice. It updates the value of each
+// digit in-place.
+//
+// The function processes digits from Least Significant (LSB) to Most Significant (MSB).
+// If the provided value is too large to be represented by the given symbols' bases,
+// it returns an error. A negative input value will also result in an error.
+func ValueAppliedToSymbolsBigInt(value *big.Int, symbols []DigitBigInt) error {
+	// Make a mutable copy of the value to avoid modifying the caller's *big.Int.
+	remainingValue := new(big.Int).Set(value)
+	zero := big.NewInt(0)
+
+	// Check for negative input value, which is not supported.
+	if remainingValue.Cmp(zero) < 0 {
+		return errors.New("negative values are not supported")
+	}
+
+	// Allocate these once to reuse in the loop.
+	quot, rem := new(big.Int), new(big.Int)
+
+	// Iterate from LSB to MSB (right to left in the slice).
+	for i := len(symbols) - 1; i >= 0; i-- {
+		digit := &symbols[i]
+		base := digit.Base
+
+		// Use DivMod to get quotient and remainder in one step.
+		// remainingValue = quot * base + rem
+		quot.DivMod(remainingValue, base, rem)
+
+		// The remainder is the new value for the current digit.
+		digit.Value.Set(rem)
+
+		// The quotient becomes the new remaining value for the next iteration.
+		remainingValue.Set(quot)
+	}
+
+	// After processing all digits, if there's still a remaining value,
+	// it means the original value was too large for the given symbols.
+	if remainingValue.Cmp(zero) != 0 {
+		return errors.New("value is too large to be represented by the given symbols")
+	}
+
+	return nil
 }
