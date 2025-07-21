@@ -1,6 +1,8 @@
 package utils
 
 import (
+	"errors"
+	"math/big"
 	"reflect"
 	"testing"
 )
@@ -98,4 +100,232 @@ func TestSymbolsRewriteTo(t *testing.T) {
 			t.Errorf("SymbolsRewriteTo with chunking = %v; want %v", got, expected)
 		}
 	})
+}
+
+func TestValueAppliedToSymbols(t *testing.T) {
+	testCases := []struct {
+		name            string
+		value           *big.Int
+		symbols         []Digit
+		expectedSymbols []Digit
+		expectedErr     error
+	}{
+		{
+			name:            "zero value",
+			value:           big.NewInt(0),
+			symbols:         []Digit{{Value: 9, Base: 10}, {Value: 9, Base: 10}},
+			expectedSymbols: []Digit{{Value: 0, Base: 10}, {Value: 0, Base: 10}},
+			expectedErr:     nil,
+		},
+		{
+			name:            "simple base 10",
+			value:           big.NewInt(123),
+			symbols:         []Digit{{Value: 0, Base: 10}, {Value: 0, Base: 10}, {Value: 0, Base: 10}},
+			expectedSymbols: []Digit{{Value: 1, Base: 10}, {Value: 2, Base: 10}, {Value: 3, Base: 10}},
+			expectedErr:     nil,
+		},
+		{
+			name:            "mixed base time representation",
+			value:           big.NewInt(90061), // 1 day, 1 hour, 1 minute, 1 second
+			symbols:         []Digit{{Value: 0, Base: 365}, {Value: 0, Base: 24}, {Value: 0, Base: 60}, {Value: 0, Base: 60}},
+			expectedSymbols: []Digit{{Value: 1, Base: 365}, {Value: 1, Base: 24}, {Value: 1, Base: 60}, {Value: 1, Base: 60}},
+			expectedErr:     nil,
+		},
+		{
+			name:            "value fits exactly",
+			value:           big.NewInt(99),
+			symbols:         []Digit{{Value: 0, Base: 10}, {Value: 0, Base: 10}},
+			expectedSymbols: []Digit{{Value: 9, Base: 10}, {Value: 9, Base: 10}},
+			expectedErr:     nil,
+		},
+		{
+			name:            "error: value too large",
+			value:           big.NewInt(100),
+			symbols:         []Digit{{Value: 0, Base: 10}, {Value: 0, Base: 10}},
+			expectedSymbols: nil, // Not checked on error
+			expectedErr:     errors.New("value is too large to be represented by the given symbols"),
+		},
+		{
+			name:            "error: negative value",
+			value:           big.NewInt(-1),
+			symbols:         []Digit{{Value: 0, Base: 10}},
+			expectedSymbols: nil, // Not checked on error
+			expectedErr:     errors.New("negative values are not supported"),
+		},
+		{
+			name:            "edge case: empty symbols, zero value",
+			value:           big.NewInt(0),
+			symbols:         []Digit{},
+			expectedSymbols: []Digit{},
+			expectedErr:     nil,
+		},
+		{
+			name:            "edge case: empty symbols, non-zero value",
+			value:           big.NewInt(1),
+			symbols:         []Digit{},
+			expectedSymbols: nil,
+			expectedErr:     errors.New("value is too large to be represented by the given symbols"),
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := ValueAppliedToSymbols(tc.value, tc.symbols)
+
+			if (err != nil) != (tc.expectedErr != nil) || (err != nil && err.Error() != tc.expectedErr.Error()) {
+				t.Errorf("ValueAppliedToSymbols() error = %v, wantErr %v", err, tc.expectedErr)
+				return
+			}
+
+			if err == nil && !reflect.DeepEqual(tc.symbols, tc.expectedSymbols) {
+				t.Errorf("ValueAppliedToSymbols() got symbols = %v, want %v", tc.symbols, tc.expectedSymbols)
+			}
+		})
+	}
+}
+
+func TestSymbolsValueBigInt(t *testing.T) {
+	// Setup for a test case with very large numbers that would overflow standard integer types.
+	twoToThe128 := new(big.Int).Exp(big.NewInt(2), big.NewInt(128), nil)
+	// expectedLargeValue represents 1 * (2^128) + 1
+	expectedLargeValue := new(big.Int).Add(new(big.Int).Set(twoToThe128), big.NewInt(1))
+
+	testCases := []struct {
+		name     string
+		symbols  []DigitBigInt
+		expected *big.Int
+	}{
+		{
+			name:     "empty slice",
+			symbols:  []DigitBigInt{},
+			expected: big.NewInt(0),
+		},
+		{
+			name:     "single non-zero digit",
+			symbols:  []DigitBigInt{{Value: big.NewInt(7), Base: big.NewInt(10)}},
+			expected: big.NewInt(7),
+		},
+		{
+			name: "simple base 10",
+			symbols: []DigitBigInt{
+				{Value: big.NewInt(1), Base: big.NewInt(10)},
+				{Value: big.NewInt(2), Base: big.NewInt(10)},
+				{Value: big.NewInt(3), Base: big.NewInt(10)},
+			},
+			expected: big.NewInt(123), // 1*10*10 + 2*10 + 3
+		},
+		{
+			name: "mixed base time representation (1h 1m 1s)",
+			symbols: []DigitBigInt{
+				{Value: big.NewInt(1), Base: big.NewInt(24)}, // hours
+				{Value: big.NewInt(1), Base: big.NewInt(60)}, // minutes
+				{Value: big.NewInt(1), Base: big.NewInt(60)}, // seconds
+			},
+			expected: big.NewInt(3661), // 1*60*60 + 1*60 + 1
+		},
+		{
+			name: "large numbers that overflow int64",
+			symbols: []DigitBigInt{
+				{Value: big.NewInt(1), Base: big.NewInt(10)}, // MSB
+				{Value: big.NewInt(1), Base: new(big.Int).Set(twoToThe128)},   // LSB
+			},
+			expected: expectedLargeValue, // 1 * (2^128) + 1
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := SymbolsValueBigInt(tc.symbols)
+			if got.Cmp(tc.expected) != 0 {
+				t.Errorf("SymbolsValueBigInt() = %v, want %v", got, tc.expected)
+			}
+		})
+	}
+}
+
+func TestSymbolsRewriteToBigInt(t *testing.T) {
+	// Helper to create []*big.Int from int64 values for easier test case definition.
+	bigInts := func(vals ...int64) []*big.Int {
+		res := make([]*big.Int, len(vals))
+		for i, v := range vals {
+			res[i] = big.NewInt(v)
+		}
+		return res
+	}
+
+	// Helper to compare slices of *big.Int, as reflect.DeepEqual would compare pointers.
+	compareBigIntSlices := func(t *testing.T, got, want []*big.Int) bool {
+		t.Helper()
+		if len(got) != len(want) {
+			return false
+		}
+		for i := range got {
+			if got[i].Cmp(want[i]) != 0 {
+				return false
+			}
+		}
+		return true
+	}
+
+	// Setup for large number test cases.
+	largeBase := new(big.Int).Exp(big.NewInt(2), big.NewInt(128), nil)
+	largeVal := new(big.Int).Add(new(big.Int).Set(largeBase), big.NewInt(1)) // Value is 2^128 + 1
+	largeValStr := largeVal.String()
+	largeValDigitsBase10 := make([]*big.Int, len(largeValStr))
+	for i, r := range largeValStr {
+		largeValDigitsBase10[i] = big.NewInt(int64(r - '0'))
+	}
+
+	testCases := []struct {
+		name       string
+		input      []*big.Int
+		inputBase  *big.Int
+		outputBase *big.Int
+		expected   []*big.Int
+	}{
+		{
+			name:       "empty input",
+			input:      bigInts(),
+			inputBase:  big.NewInt(10),
+			outputBase: big.NewInt(2),
+			expected:   bigInts(),
+		},
+		{
+			name:       "zero",
+			input:      bigInts(0),
+			inputBase:  big.NewInt(10),
+			outputBase: big.NewInt(2),
+			expected:   bigInts(0),
+		},
+		{
+			name:       "same base",
+			input:      bigInts(1, 2, 3),
+			inputBase:  big.NewInt(10),
+			outputBase: big.NewInt(10),
+			expected:   bigInts(1, 2, 3),
+		},
+		{
+			name:       "base 10 to 16",
+			input:      bigInts(4, 7, 8), // 478
+			inputBase:  big.NewInt(10),
+			outputBase: big.NewInt(16),
+			expected:   bigInts(1, 13, 14),
+		},
+		{
+			name:       "large number base 10 to large base",
+			input:      largeValDigitsBase10, // Digits of 2^128 + 1
+			inputBase:  big.NewInt(10),
+			outputBase: largeBase,
+			expected:   bigInts(1, 1),
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := SymbolsRewriteToBigInt(tc.input, tc.inputBase, tc.outputBase)
+			if !compareBigIntSlices(t, got, tc.expected) {
+				t.Errorf("SymbolsRewriteToBigInt() = %v, want %v", got, tc.expected)
+			}
+		})
+	}
 }
